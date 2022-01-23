@@ -174,8 +174,14 @@ class Polynomial:
         [[[0, 0], [0, 1]], [[1, 0], [1, 1]], [[2, 0], [2, 1]]]"""
         return np.moveaxis(np.indices(shape), 0, -1)
 
+    @staticmethod
+    def _trim_zero(array):
+        "Drop zero coefficients for highest powers"
+        slices = tuple(slice(None, idx.max() + 1) for idx in np.nonzero(array))
+        return array[slices]
+
     def _poly_call(self, arg):
-        "Generalized polynomial operations"
+        "Compose polynomial"
         poly_iter = np.nditer(
             self.coef, op_flags=['readonly'], flags=['multi_index']
         )
@@ -205,7 +211,7 @@ class Polynomial:
             ),
             Polynomial.zeros(dim)
         )
-        return result
+        return Polynomial(Polynomial._trim_zero(result.coef))
 
     def _vector_call(self, arg):
         "Vectorized array call"
