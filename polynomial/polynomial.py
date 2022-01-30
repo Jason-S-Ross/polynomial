@@ -13,36 +13,73 @@ class Polynomial:
     Supports array evaluation, addition, multiplication, composition,
     derivation, and integration."""
 
-    @property
-    def coef(self):
-        """Coefficients of the polynomial as an ndarray.
-        Example: [[1, 2], [3, 4]] represents the polynomial
-        1 + 2x + 3 y + 4 xy"""
-        return self._coef
-
-    @property
-    def shape(self):
-        "Shape of the polynomial"
-        return self.coef.shape
-
-    @property
-    def dtype(self):
-        "Data type of the polynomial coefficients"
-        return self.coef.dtype
-
-    @property
-    def dimension(self):
-        "Number of variables of the polynomial"
-        return len(self.coef.shape)
-
-    @property
-    def degree(self):
-        """The maximum single power. For instance, 1 + x + y + xy
-        would be degree 1, not 2"""
-        return max(self.coef.shape)
+    __slots__ = ["_coef"]
 
     def __init__(self, coef):
         self._coef = np.asanyarray(coef)
+
+    @classmethod
+    def interpolate(cls, points, values):
+        """Returns the interpolating polynomial through the provided points."""
+        points = np.asanyarray(points)
+        values = np.asanyarray(values)
+        if points.shape[0] != values.shape[0]:
+            raise ValueError("Points and values have different lengths")
+        if len(values.shape) != 1:
+            raise ValueError("Values should be a one-dimensional array")
+        if len(points.shape) != 2:
+            raise ValueError("Points should be a two-dimensional array")
+        dimension = points.shape[1]
+        return reduce(
+            add,
+            (
+                values[i] * reduce(
+                    mul,
+                    (
+                        reduce(
+                            mul,
+                            (
+                                cls(
+                                    np.array([-point2[dim], 1]).reshape(
+                                        tuple(
+                                            2 if k == dim else 1
+                                            for k in range(dimension))
+                                    )
+                                ) / (point1[dim] - point2[dim])
+                                for j, point2 in enumerate(points)
+                                if not np.allclose(point1[dim], point2[dim])
+                            ),
+                            cls.one(dimension)
+                        )
+                        for dim in range(dimension)
+                    ),
+                    cls.one(dimension)
+                )
+                for i, point1 in enumerate(points)
+            ),
+            cls.zero(dimension)
+        )
+
+    @classmethod
+    def lagrange(cls, points):
+        """Returns lagrange interpolating polynomials at points"""
+        l = len(points)
+        return [
+            cls.interpolate(points, [int(i==j) for j in range(l)])
+            for i in range(l)
+        ]
+
+    def __call__(self, arg):
+        arg = np.asanyarray(arg)
+        if arg.shape[-1] != self.dimension:
+            raise ValueError(
+                "Degree mismatch: cannot evaluate a polynomial of dimension "
+                f"{self.dimension} on arguments of first dimension "
+                f"{arg.shape[0]}"
+            )
+        if arg.dtype == np.dtype('O'):
+            return self._poly_call(arg)
+        return self._vector_call(np.moveaxis(arg, -1, 0))
 
     def __repr__(self):
         coef = repr(self.coef)[6:-1]
@@ -66,26 +103,6 @@ class Polynomial:
         new_coef[slc2] += other.coef
         return self.__class__(new_coef)
 
-    def _scale(self, fac):
-        """Scales a polynomial by a number."""
-        return self.__class__(self.coef * fac)
-
-    def _prod(self, other):
-        new_shape = [l + r - 1 for l, r in zip(self.shape, other.shape)]
-        new_dtype = np.find_common_type((self.dtype, other.dtype), ())
-        my_indices = (
-            Polynomial._index_array(self.shape).reshape(-1, self.dimension)
-        )
-        other_indices = (
-            Polynomial._index_array(other.shape).reshape(-1, other.dimension)
-        )
-        result = np.zeros(new_shape, new_dtype)
-        for my_index, other_index in product(my_indices, other_indices):
-            result[tuple(my_index + other_index)] += (
-                self.coef[tuple(my_index)] * other.coef[tuple(other_index)]
-            )
-        return self.__class__(result)
-
     def __mul__(self, other):
         if isinstance(other, Polynomial):
             if other.dimension != self.dimension:
@@ -97,6 +114,9 @@ class Polynomial:
 
     def __rmul__(self, other):
         return self * other
+
+    def __truediv__(self, other):
+        return self._scale(1/other)
 
     def deriv(self, arg):
         """Derivative with respect to arg.
@@ -153,18 +173,66 @@ class Polynomial:
         return Polynomial(result)
 
     @classmethod
-    def zeros(cls, dimension):
+    def zero(cls, dimension):
         """
         Construct a polynomial of desired dimension with all zero coefficients.
         """
         return cls(np.zeros((1,)*dimension))
 
     @classmethod
-    def ones(cls, dimension):
+    def one(cls, dimension):
         """
         Construct a polynomial of desired dimension equal to the constant 1.
         """
         return cls(np.ones((1,)*dimension))
+
+    @property
+    def coef(self):
+        """Coefficients of the polynomial as an ndarray.
+        Example: [[1, 2], [3, 4]] represents the polynomial
+        1 + 2x + 3 y + 4 xy"""
+        return self._coef
+
+    @property
+    def shape(self):
+        "Shape of the polynomial"
+        return self.coef.shape
+
+    @property
+    def dtype(self):
+        "Data type of the polynomial coefficients"
+        return self.coef.dtype
+
+    @property
+    def dimension(self):
+        "Number of variables of the polynomial"
+        return len(self.coef.shape)
+
+    @property
+    def degree(self):
+        """The maximum single power. For instance, 1 + x + y + xy
+        would be degree 1, not 2"""
+        return max(self.coef.shape)
+
+    def _scale(self, fac):
+        """Scales a polynomial by a number."""
+        return self.__class__(self.coef * fac)
+
+    def _prod(self, other):
+        new_shape = [l + r - 1 for l, r in zip(self.shape, other.shape)]
+        new_dtype = np.find_common_type((self.dtype, other.dtype), ())
+        my_indices = (
+            Polynomial._index_array(self.shape).reshape(-1, self.dimension)
+        )
+        other_indices = (
+            Polynomial._index_array(other.shape).reshape(-1, other.dimension)
+        )
+        result = np.zeros(new_shape, new_dtype)
+        for my_index, other_index in product(my_indices, other_indices):
+            result[tuple(my_index + other_index)] += (
+                self.coef[tuple(my_index)] * other.coef[tuple(other_index)]
+            )
+        return self.__class__(result)
 
     @staticmethod
     def _index_array(shape):
@@ -201,15 +269,15 @@ class Polynomial:
                         reduce(
                             mul,
                             (arg[i] for _ in range(power)),
-                            Polynomial.ones(dim)
+                            Polynomial.one(dim)
                         )
                         for i, power in enumerate(poly_iter.multi_index)
                     ),
-                    Polynomial.ones(dim)
+                    Polynomial.one(dim)
                 )
                 for coef in poly_iter
             ),
-            Polynomial.zeros(dim)
+            Polynomial.zero(dim)
         )
         return Polynomial(Polynomial._trim_zero(result.coef))
 
@@ -222,14 +290,3 @@ class Polynomial:
             c = polyval(xi, c, tensor=False)
         return c
 
-    def __call__(self, arg):
-        arg = np.asanyarray(arg)
-        if arg.shape[0] != self.dimension:
-            raise ValueError(
-                "Degree mismatch: cannot evaluate a polynomial of dimension "
-                f"{self.dimension} on arguments of first dimension "
-                f"{arg.shape[0]}"
-            )
-        if arg.dtype == np.dtype('O'):
-            return self._poly_call(arg)
-        return self._vector_call(arg)
