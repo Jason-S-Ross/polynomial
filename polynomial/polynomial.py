@@ -1,6 +1,6 @@
 """Module for manipulating n-dimensional polynomials."""
 from functools import reduce
-from operator import mul, add
+from operator import mul, add, eq
 from itertools import product
 
 import numpy as np
@@ -69,6 +69,26 @@ class Polynomial:
             for i in range(l)
         ]
 
+    @classmethod
+    def from_terms(cls, terms):
+        """
+        Construct a polynomial from a dictionary of (powers, coef) pairs.
+        """
+        terms = dict(terms)
+        dimension = reduce(lambda a, b: a if len(a) == len(b) else (), terms)
+        if not dimension:
+            raise ValueError("All terms must have same dimension.")
+        shape = np.max(np.array(list(terms)), axis=0).astype(np.int32)
+        shape += np.ones_like(shape)
+        coefs = np.zeros(shape)
+        for powers, coef in terms.items():
+            try:
+                coefs[tuple(powers)] = coef
+            except IndexError as e:
+                raise ValueError("Indices must be integers", e)
+        return cls(coefs)
+
+
     def __call__(self, arg):
         arg = np.asanyarray(arg)
         if arg.shape[-1] != self.dimension:
@@ -85,6 +105,28 @@ class Polynomial:
         coef = repr(self.coef)[6:-1]
         name = self.__class__.__name__
         return f"{name}({coef})"
+
+    def __str__(self):
+        subscripts = "₀₁₂₃₄₅₆₇₈₉"
+        superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹"
+        def get_subscript(number):
+            return "".join(subscripts[int(i)] for i in str(number))
+        def get_superscript(number):
+            return "".join(superscripts[int(i)] for i in str(number))
+        poly_iter = np.nditer(
+            self.coef, op_flags=['readonly'], flags=['multi_index']
+        )
+        result = []
+        for coef in poly_iter:
+            if not coef:
+                continue
+            factor = [str(coef)]
+            for index, power in enumerate(poly_iter.multi_index):
+                if not power:
+                    continue
+                factor.append(f'x{get_subscript(index+1)}{get_superscript(power)}')
+            result.append("".join(factor))
+        return " + ".join(result)
 
     def __add__(self, other):
         """Adds two polynomials. Resulting polynomial is as large as either"""
